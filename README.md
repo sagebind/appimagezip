@@ -18,5 +18,8 @@ make
 ## Usage
 See `appimagezip --help` for more details.
 
+## License
+MIT
+
 
 [AppImageSpec]: https://github.com/AppImage/AppImageSpec
