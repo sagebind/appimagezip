@@ -1,0 +1,17 @@
+[package]
+name = "appimagezip"
+version = "0.1.0"
+authors = ["Stephen M. Coakley <me@stephencoakley.com>"]
+
+[dependencies]
+getopts = "0.2.14"
+log = "0.3"
+simplelog = "0.4.2"
+time = "0.1"
+
+[dependencies.zip]
+git = "https://github.com/sagebind/zip-rs"
+branch = "handle-prepended-data"
+
+[workspace]
+members = ["bootstrap"]

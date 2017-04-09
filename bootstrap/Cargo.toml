@@ -1,0 +1,20 @@
+[package]
+name = "appimagezip-bootstrap"
+version = "0.1.0"
+authors = ["Stephen M. Coakley <me@stephencoakley.com>"]
+
+[[bin]]
+name = "bootstrap"
+path = "main.rs"
+
+[dependencies]
+fuse = "0.3.0"
+libc = "0.2"
+log = "0.3"
+simplelog = "0.4.2"
+tempdir = "0.3"
+time = "0.1"
+
+[dependencies.zip]
+git = "https://github.com/sagebind/zip-rs"
+branch = "handle-prepended-data"
