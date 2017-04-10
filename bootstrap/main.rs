@@ -12,6 +12,7 @@ mod fs;
 use fs::AppImageFileSystem;
 use std::env;
 use std::fs::read_link;
+use std::os::unix::process::ExitStatusExt;
 use std::process::{exit, Command};
 use tempdir::TempDir;
 
@@ -70,16 +71,22 @@ fn run() -> i32 {
     // Wait for the file system to be initialized.
     ready.wait();
 
-    // Run the client application.
-    if let Err(e) = Command::new(&app_run_path).args(env::args()).status() {
-        printerr!("Failed to execute {:?}: {}", app_run_path, e);
-        return 70;
-    }
+    // Run the client application and capture the exit status.
+    let status = match Command::new(&app_run_path).args(env::args()).status() {
+        Ok(s) => s,
+        Err(e) => {
+            printerr!("Failed to execute {:?}: {}", app_run_path, e);
+            return 70;
+        },
+    };
 
+    // Unmount the file system and remove the mount directory.
     drop(session);
     drop(mount_dir);
 
-    0
+    // Return the exit status of the client application. If the application was terminated via a signal, instead return
+    // 128 + signum.
+    status.code().unwrap_or(128 + status.signal().unwrap_or(0))
 }
 
 fn main() {
