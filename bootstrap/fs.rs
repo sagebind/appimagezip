@@ -31,7 +31,7 @@ struct NodeData {
 }
 
 impl NodeData {
-    pub fn inode(&self) -> u64 {
+    pub fn inode(&self) -> Inode {
         self.attr.ino
     }
 
