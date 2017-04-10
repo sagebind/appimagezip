@@ -63,7 +63,6 @@ impl Creator {
 
         for entry in RecursiveDirIterator::new(&self.app_dir)?.filter_map(|r| r.ok()) {
             let relative_path = entry.path().strip_prefix(&self.app_dir).unwrap().to_path_buf();
-            println!("{:?}", relative_path);
 
             let metadata = fs::metadata(entry.path())?;
             let mtime = Timespec::new(metadata.mtime(), metadata.mtime_nsec() as i32);
