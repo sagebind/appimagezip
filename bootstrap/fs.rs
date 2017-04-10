@@ -1,4 +1,5 @@
 //! Zip-based AppImage implementation of a FUSE file system.
+use event::NotifyFlag;
 use fuse::*;
 use libc;
 use std::cell::RefCell;
@@ -43,6 +44,9 @@ pub struct AppImageFileSystem {
     /// Metadata about the AppImage file.
     metadata: Metadata,
 
+    /// Barrier signaling when the file system is ready.
+    ready: NotifyFlag,
+
     /// An open handle to the zipped AppImage filesystem.
     archive: RefCell<ZipArchive<File>>,
 
@@ -71,6 +75,7 @@ impl AppImageFileSystem {
 
         Some(Self {
             metadata: metadata,
+            ready: NotifyFlag::new(),
             archive: RefCell::new(archive),
             inode_cache: RefCell::new(HashMap::new()),
             path_cache: RefCell::new(HashMap::new()),
@@ -80,6 +85,11 @@ impl AppImageFileSystem {
     /// Open the current executable as an AppImage filesystem.
     pub fn open_self() -> Option<Self> {
         Self::open("/proc/self/exe")
+    }
+
+    /// Gets a flag that can be used to wait until the file system is ready.
+    pub fn ready(&self) -> NotifyFlag {
+        self.ready.clone()
     }
 
     fn get_max_inode(&self) -> u64 {
@@ -168,6 +178,12 @@ impl AppImageFileSystem {
 }
 
 impl Filesystem for AppImageFileSystem {
+    fn init(&mut self, _req: &Request) -> Result<(), i32> {
+        self.ready.notify_all();
+
+        Ok(())
+    }
+
     fn lookup(&mut self, _req: &Request, parent_inode: u64, child_name: &OsStr, reply: ReplyEntry) {
         if let Some(parent) = self.get_node_by_inode(parent_inode) {
             let mut child_path = parent.path.clone();
@@ -201,7 +217,6 @@ impl Filesystem for AppImageFileSystem {
             reply.add(inode, 0, FileType::Directory, ".");
 
             // Find the parent directory.
-            println!("inode {}", inode);
             if inode == FUSE_ROOT_ID {
                 reply.add(1, 1, FileType::Directory, "..");
             } else {
