@@ -2,6 +2,10 @@
 extern crate alloc_system;
 extern crate fuse;
 extern crate libc;
+#[cfg(feature = "logging")]
+extern crate log;
+#[cfg(feature = "logging")]
+extern crate simplelog;
 extern crate tempdir;
 extern crate time;
 extern crate zip;
@@ -14,6 +18,7 @@ use std::env;
 use std::fs::read_link;
 use std::os::unix::process::ExitStatusExt;
 use std::process::{exit, Command};
+use std::thread;
 use tempdir::TempDir;
 
 
@@ -29,6 +34,9 @@ macro_rules! printerr {
 }
 
 fn run() -> i32 {
+    #[cfg(feature = "logging")]
+    let _ = simplelog::TermLogger::init(log::LogLevelFilter::Debug, simplelog::Config::default());
+
     // Open this binary as an AppImage file system.
     let file_system = match AppImageFileSystem::open_self() {
         Some(v) => v,
@@ -79,6 +87,8 @@ fn run() -> i32 {
             return 70;
         },
     };
+
+    // thread::sleep_ms(60000);
 
     // Unmount the file system and remove the mount directory.
     drop(session);

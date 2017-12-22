@@ -62,22 +62,27 @@ impl Creator {
         let mut zip = ZipWriter::new(&mut writer);
 
         for entry in RecursiveDirIterator::new(&self.app_dir)?.filter_map(|r| r.ok()) {
+            println!("copy: {:?}", entry.path());
+            let path = entry.path();
             let relative_path = entry.path().strip_prefix(&self.app_dir).unwrap().to_path_buf();
 
-            let metadata = fs::metadata(entry.path())?;
-            let mtime = Timespec::new(metadata.mtime(), metadata.mtime_nsec() as i32);
-            let options = FileOptions::default()
-                .last_modified_time(time::at(mtime))
-                .unix_permissions(metadata.mode());
+            if path.exists() {
+                let metadata = fs::metadata(entry.path())?;
+                let mtime = Timespec::new(metadata.mtime(), metadata.mtime_nsec() as i32);
+                let options = FileOptions::default()
+                    .last_modified_time(time::at(mtime))
+                    .unix_permissions(metadata.mode());
 
-            if entry.file_type()?.is_dir() {
-                zip.add_directory(relative_path.to_string_lossy(), options)?;
-            } else {
-                zip.start_file(relative_path.to_string_lossy(), options)?;
+                if entry.file_type()?.is_dir() {
+                    let name_with_slash = format!("{}/", relative_path.to_string_lossy());
+                    zip.add_directory(name_with_slash, options)?;
+                } else {
+                    zip.start_file(relative_path.to_string_lossy(), options)?;
 
-                let mut file = File::open(entry.path())?;
-                io::copy(&mut file, &mut zip)?;
-                zip.flush()?;
+                    let mut file = File::open(entry.path())?;
+                    io::copy(&mut file, &mut zip)?;
+                    zip.flush()?;
+                }
             }
         }
 
@@ -92,7 +97,7 @@ impl Creator {
 
         // Mark the file as executable.
         let mut permissions = file.metadata()?.permissions();
-        let mode = permissions.mode() | 0b001001001;
+        let mode = permissions.mode() | 0o111;
         permissions.set_mode(mode);
         file.set_permissions(permissions)?;
 

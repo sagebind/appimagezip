@@ -40,4 +40,4 @@ bin/bootstrap: bin target/release/bootstrap
 	printf '\x41\x49\x02' | dd of=$@ bs=1 seek=8 count=3 conv=notrunc
 
 target/release/bootstrap: $(wildcard bootstrap/*.rs)
-	$(CARGO) rustc --manifest-path bootstrap/Cargo.toml --release --verbose -- $(RUSTC_BOOTSTRAP_FLAGS)
+	$(CARGO) rustc --manifest-path bootstrap/Cargo.toml --release -- $(RUSTC_BOOTSTRAP_FLAGS)

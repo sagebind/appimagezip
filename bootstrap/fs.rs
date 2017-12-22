@@ -2,7 +2,6 @@
 use event::NotifyFlag;
 use fuse::*;
 use libc;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::{File, Metadata};
@@ -15,7 +14,7 @@ use zip::ZipArchive;
 
 /// Time-to-live for responses. As this is a read-only file system, we can have long TTL values.
 const TTL: Timespec = Timespec {
-    sec: 10,
+    sec: 0,
     nsec: 0,
 };
 
@@ -23,7 +22,7 @@ const TTL: Timespec = Timespec {
 type Inode = u64;
 
 /// Cached data about an inode.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct NodeData {
     path: PathBuf,
     is_dir: bool,
@@ -48,13 +47,13 @@ pub struct AppImageFileSystem {
     ready: NotifyFlag,
 
     /// An open handle to the zipped AppImage filesystem.
-    archive: RefCell<ZipArchive<File>>,
+    archive: ZipArchive<File>,
 
     /// Cache of inode data.
-    inode_cache: RefCell<HashMap<Inode, NodeData>>,
+    inode_cache: HashMap<Inode, NodeData>,
 
     /// Cache mapping paths to inodes.
-    path_cache: RefCell<HashMap<PathBuf, NodeData>>,
+    path_cache: HashMap<PathBuf, NodeData>,
 }
 
 impl AppImageFileSystem {
@@ -76,9 +75,9 @@ impl AppImageFileSystem {
         Some(Self {
             metadata: metadata,
             ready: NotifyFlag::new(),
-            archive: RefCell::new(archive),
-            inode_cache: RefCell::new(HashMap::new()),
-            path_cache: RefCell::new(HashMap::new()),
+            archive: archive,
+            inode_cache: HashMap::new(),
+            path_cache: HashMap::new(),
         })
     }
 
@@ -92,84 +91,93 @@ impl AppImageFileSystem {
         self.ready.clone()
     }
 
-    fn get_max_inode(&self) -> u64 {
-        self.archive.borrow().len() as u64 + 1
+    fn get_inode_count(&self) -> u64 {
+        self.archive.len() as u64 + 1
     }
 
-    fn get_node_by_inode(&self, inode: Inode) -> Option<NodeData> {
-        if inode < FUSE_ROOT_ID || inode > self.get_max_inode() {
+    fn get_node_by_inode(&mut self, inode: Inode) -> Option<NodeData> {
+        if inode < FUSE_ROOT_ID || inode > self.get_inode_count() {
             return None;
         }
 
-        Some(self.inode_cache.borrow_mut().entry(inode).or_insert_with(|| {
-            if inode == FUSE_ROOT_ID {
-                NodeData {
-                    path: PathBuf::new(),
-                    is_dir: true,
-                    attr: FileAttr {
-                        ino: 1,
-                        size: 0,
-                        blocks: 0,
-                        atime: Timespec::new(self.metadata.atime(), self.metadata.atime_nsec() as i32),
-                        mtime: Timespec::new(self.metadata.mtime(), self.metadata.mtime_nsec() as i32),
-                        ctime: Timespec::new(self.metadata.ctime(), self.metadata.ctime_nsec() as i32),
-                        crtime: Timespec::new(self.metadata.ctime(), self.metadata.ctime_nsec() as i32),
-                        kind: FileType::Directory,
-                        perm: self.metadata.permissions().mode() as u16,
-                        nlink: 2,
-                        uid: self.metadata.uid(),
-                        gid: self.metadata.gid(),
-                        rdev: 0,
-                        flags: 0,
-                    },
-                }
-            } else {
-                let mut archive = self.archive.borrow_mut();
-                let entry = archive.by_index(inode as usize - 2).unwrap();
-                let time = entry.last_modified().to_timespec();
-                let is_dir = entry.name().ends_with("/");
-
-                NodeData {
-                    path: PathBuf::from(entry.name()),
-                    is_dir: is_dir,
-                    attr: FileAttr {
-                        ino: inode,
-                        size: if is_dir {0} else {entry.size()},
-                        blocks: if is_dir {0} else {1},
-                        atime: time,
-                        mtime: time,
-                        ctime: time,
-                        crtime: time,
-                        kind: if is_dir {
-                            FileType::Directory
-                        } else {
-                            FileType::RegularFile
-                        },
-                        perm: entry.unix_mode().unwrap_or(0o777) as u16,
-                        nlink: 2,
-                        uid: self.metadata.uid(),
-                        gid: self.metadata.gid(),
-                        rdev: 0,
-                        flags: 0,
-                    },
-                }
-            }
-        }).clone())
-    }
-
-    fn get_node_by_path(&self, path: PathBuf) -> Option<NodeData> {
-        let mut cache = self.path_cache.borrow_mut();
-
-        if cache.contains_key(&path) {
-            return cache.get(&path).cloned();
+        if self.inode_cache.contains_key(&inode) {
+            return self.inode_cache.get(&inode).cloned();
         }
 
-        for i in 2..self.get_max_inode()+1 {
-            let data = self.get_node_by_inode(i).unwrap();
+        let node = if inode == FUSE_ROOT_ID {
+            NodeData {
+                path: PathBuf::new(),
+                is_dir: true,
+                attr: FileAttr {
+                    ino: 1,
+                    size: 0,
+                    blocks: 0,
+                    atime: Timespec::new(self.metadata.atime(), self.metadata.atime_nsec() as i32),
+                    mtime: Timespec::new(self.metadata.mtime(), self.metadata.mtime_nsec() as i32),
+                    ctime: Timespec::new(self.metadata.ctime(), self.metadata.ctime_nsec() as i32),
+                    crtime: Timespec::new(self.metadata.ctime(), self.metadata.ctime_nsec() as i32),
+                    kind: FileType::Directory,
+                    perm: self.metadata.permissions().mode() as u16,
+                    nlink: 2,
+                    uid: self.metadata.uid(),
+                    gid: self.metadata.gid(),
+                    rdev: 0,
+                    flags: 0,
+                },
+            }
+        } else {
+            let entry = self.archive.by_index(inode as usize - 2).unwrap();
+            let time = entry.last_modified().to_timespec();
 
-            if data.path == path {
-                cache.insert(path, data.clone());
-                return Some(data);
+            // Get the external attributes and derive the permissions from that.
+            let external_attributes_high = entry.unix_mode().unwrap_or(0o777);
+            let mode = external_attributes_high as u16 & 0o777;
+
+            // Determine if the entry is a directory. If the name ends in /, then it is a directory. If bit 4 is set
+            // then it is also a directory.
+            let is_dir = external_attributes_high & libc::S_IFDIR == libc::S_IFDIR || entry.name().ends_with("/");
+
+            NodeData {
+                path: PathBuf::from(entry.name()),
+                is_dir: is_dir,
+                attr: FileAttr {
+                    ino: inode,
+                    size: entry.size(),
+                    blocks: 0,
+                    atime: time,
+                    mtime: time,
+                    ctime: time,
+                    crtime: time,
+                    kind: if is_dir {
+                        FileType::Directory
+                    } else {
+                        FileType::RegularFile
+                    },
+                    perm: mode,
+                    nlink: 3,
+                    uid: self.metadata.uid(),
+                    gid: self.metadata.gid(),
+                    rdev: 0,
+                    flags: 0,
+                },
+            }
+        };
+
+        self.inode_cache.insert(inode, node.clone());
+        Some(node)
+    }
+
+    fn get_node_by_path(&mut self, path: PathBuf) -> Option<NodeData> {
+        if self.path_cache.contains_key(&path) {
+            return self.path_cache.get(&path).cloned();
+        }
+
+        for i in 1..self.get_inode_count()+1 {
+            let node = self.get_node_by_inode(i).unwrap();
+
+            if node.path == path {
+                self.path_cache.insert(path, node.clone());
+                return Some(node);
             }
         }
 
@@ -181,6 +189,7 @@ impl Filesystem for AppImageFileSystem {
     fn init(&mut self, _req: &Request) -> Result<(), i32> {
         self.ready.notify_all();
 
+        println!("inode count: {}", self.get_inode_count());
         Ok(())
     }
 
@@ -193,8 +202,10 @@ impl Filesystem for AppImageFileSystem {
                 reply.entry(&TTL, &child.attr, 0);
                 return;
             }
+
         }
 
+        println!("error lookup({:?}, {:?})", parent_inode, child_name);
         reply.error(libc::ENOENT);
     }
 
@@ -207,39 +218,49 @@ impl Filesystem for AppImageFileSystem {
     }
 
     fn readdir(&mut self, _req: &Request, inode: u64, _fh: u64, offset: u64, mut reply: ReplyDirectory) {
-        if let Some(data) = self.get_node_by_inode(inode) {
+        if let Some(parent_node) = self.get_node_by_inode(inode) {
+            // println!("readdir({})", inode);
             if offset > 0 {
                 reply.ok();
                 return;
             }
 
+            let mut reply_offset = 0;
+
             // Add the current directory.
-            reply.add(inode, 0, FileType::Directory, ".");
+            reply.add(inode, reply_offset, FileType::Directory, ".");
+            reply_offset += 1;
 
             // Find the parent directory.
             if inode == FUSE_ROOT_ID {
-                reply.add(1, 1, FileType::Directory, "..");
-            } else {
-                for i in 1..self.get_max_inode()+1 {
-                    let parent_data = self.get_node_by_inode(i).unwrap();
+                reply.add(1, reply_offset, FileType::Directory, "..");
+                reply_offset += 1;
+            } else if let Some(parent_parent_path) = parent_node.path.parent() {
+                for i in 1..self.get_inode_count()+1 {
+                    let node = self.get_node_by_inode(i).unwrap();
 
-                    if let Some(parent_path) = data.path.parent() {
-                        if parent_data.path == parent_path {
-                            reply.add(parent_data.inode(), 1, FileType::Directory, "..");
-                            return;
-                        }
+                    if node.path == parent_parent_path {
+                        reply.add(node.inode(), reply_offset, FileType::Directory, "..");
+                        reply_offset += 1;
+                        break;
                     }
                 }
             }
 
             // Find child nodes.
-            for i in 2..self.get_max_inode()+1 {
-                let child_data = self.get_node_by_inode(i).unwrap();
+            for i in 2..self.get_inode_count()+1 {
+                let child_node = self.get_node_by_inode(i).unwrap();
 
-                if let Some(parent) = child_data.path.parent() {
-                    if parent == data.path {
-                        reply.add(child_data.inode(), i, child_data.attr.kind, child_data.name());
+                if let Some(child_parent_path) = child_node.path.parent() {
+                    // println!("{:?} == {:?}?", child_parent_path, parent_node.path);
+                    if child_parent_path == parent_node.path {
+                        println!("{:?} > {} - {:?}", parent_node.path, child_node.inode(), child_node.path);
+                        reply.add(child_node.inode(), reply_offset, child_node.attr.kind, child_node.name());
+                        reply_offset += 1;
                     }
+                } else if inode == FUSE_ROOT_ID {
+                    reply.add(child_node.inode(), reply_offset, child_node.attr.kind, child_node.name());
+                    reply_offset += 1;
                 }
             }
 
@@ -252,8 +273,7 @@ impl Filesystem for AppImageFileSystem {
     fn read(&mut self, _req: &Request, inode: u64, _fh: u64, offset: u64, size: u32, reply: ReplyData) {
         if let Some(data) = self.get_node_by_inode(inode) {
             if !data.is_dir {
-                let mut archive = self.archive.borrow_mut();
-                let mut entry =  archive.by_index(inode as usize - 2).unwrap();
+                let mut entry = self.archive.by_index(inode as usize - 2).unwrap();
 
                 let mut read = offset as usize + size as usize;
                 if read > data.attr.size as usize {

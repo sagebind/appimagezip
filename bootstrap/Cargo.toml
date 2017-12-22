@@ -16,3 +16,15 @@ time = "0.1"
 [dependencies.zip]
 git = "https://github.com/sagebind/zip-rs"
 branch = "handle-prepended-data"
+
+[dependencies.log]
+version = "0.3"
+optional = true
+
+[dependencies.simplelog]
+version = "0.4.2"
+optional = true
+
+[features]
+default = []
+logging = ["log", "simplelog"]
